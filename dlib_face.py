@@ -9,13 +9,16 @@ class face():
         self.img = cv2.merge([r, b, g])
         self.detector = dlib.get_frontal_face_detector() #获取人脸分类器
         #               cnn_face_detector = dlib.cnn_face_detection_model_v1( .dat文件--cnn模型 )
-        self.predictor = dlib.shape_predictor(predictor_path)  # 获取人脸检测器
+        self.predictor = dlib.shape_predictor(predictor_path)  # 获取人脸特征点检测器
         self.recognition = dlib.face_recognition_model_v1(recognition_path) #可将人脸转为128维向量
 
-    # dlib基于HOG的人脸检测   （还有dlib基于cnn的人脸检测）
+    # dlib基于HOG的人脸检测，标定特征点  （还有dlib基于cnn的人脸检测）
     def face_detect(self):
         dets = self.detector(self.img, 1)
         print("Number of faces detected: {}".format(len(dets)))#打印识别到的人脸个数
+        if(len(dets) == 0):
+            exit()
+
         for index, face in enumerate(dets):
             print('face {}; left {}; top {}; right {}; bottom {}'.format(index,
                                 face.left(), face.top(), face.right(),face.bottom()))
@@ -37,7 +40,36 @@ class face():
 
             face_descriptor = self.recognition.compute_face_descriptor(self.img, shape)  # 计算人脸的128维的向量
             print(face_descriptor)
+
         return self.img
+
+    #人脸特征点对齐（在这里是将人脸摆正）
+    def face_shape_align(self):
+        dets = self.detector(self.img, 1)
+        print("Number of faces detected: {}".format(len(dets)))#打印识别到的人脸个数
+        if(len(dets) == 0):
+            exit()
+
+        # 识别人脸特征点，并保存下来
+        #//关键点存储方式为full_object_detection，这是一种包含矩形框和关键点位置的数据格式
+        shapes = dlib.full_object_detections()
+        for det in dets:
+            shapes.append(self.predictor(self.img, det))
+
+        #人脸对齐
+        #这些面将垂直旋转并缩放到size x size像素或使用可选的指定大小和填充
+        images = dlib.get_face_chips(self.img, shapes, size=150)
+        # 显示计数，按照这个计数创建窗口
+        image_cnt = 0
+        # 显示对齐结果
+        for image in images:
+            image_cnt += 1
+            cv_rgb_image = np.array(image).astype(np.uint8)  # 先转换为numpy数组
+            cv_bgr_image = cv2.cvtColor(cv_rgb_image, cv2.COLOR_RGB2BGR)#opencv下为bgr，故从rgb转换为bgr
+            cv2.imshow('%s' % (image_cnt), cv_bgr_image)
+
+
+
 
 
 #目标跟踪
@@ -146,11 +178,10 @@ class myCorrelationTracker():
 
 
 """人脸检测和标定"""
-img = cv2.imread("2.jpg", cv2.IMREAD_COLOR)
+img = cv2.imread("4.jpg", cv2.IMREAD_COLOR)
 f = face(img, predictor_path="shape_predictor_68_face_landmarks.dat",
         recognition_path="dlib_face_recognition_resnet_model_v1.dat")
-img = f.face_detect()
-cv2.imshow("face", img)
+f.face_shape_align()
 cv2.waitKey()
 
 
