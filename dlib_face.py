@@ -69,6 +69,23 @@ class face():
             cv2.imshow('%s' % (image_cnt), cv_bgr_image)
 
 
+class transFace():
+    def __init__(self, img, predictor_path):
+        self.img = img
+        self.detector = dlib.get_frontal_face_detector() #获取人脸分类器
+        #               cnn_face_detector = dlib.cnn_face_detection_model_v1( .dat文件--cnn模型 )
+        self.predictor = dlib.shape_predictor(predictor_path)  # 获取人脸特征点检测器
+
+    def get_landmark(self):
+        face_rect = self.detector(self.img, 1)
+        if(len(face_rect) > 1):
+            print('Too many faces.We only need no more than one face.')
+        elif(len(face_rect) == 0):
+            print('No face.We need at least one face.')
+        else:
+            print('left {0}; top {1}; right {2}; bottom {3}'.format(face_rect[0].left(), face_rect[0].top(),
+                                                                    face_rect[0].right(), face_rect[0].bottom()))
+            return np.matrix([[p.x, p.y] for p in self.predictor(self.img, face_rect[0]).parts()])
 
 
 
@@ -178,12 +195,11 @@ class myCorrelationTracker():
 
 
 """人脸检测和标定"""
-img = cv2.imread("4.jpg", cv2.IMREAD_COLOR)
-f = face(img, predictor_path="shape_predictor_68_face_landmarks.dat",
-        recognition_path="dlib_face_recognition_resnet_model_v1.dat")
-f.face_shape_align()
+img = cv2.imread("5.jpg", cv2.IMREAD_COLOR)
+f = transFace(img, predictor_path="shape_predictor_68_face_landmarks.dat")
+mat_landmarks = f.get_landmark()
+print(mat_landmarks)
 cv2.waitKey()
-
 
 
 """  目标跟踪
