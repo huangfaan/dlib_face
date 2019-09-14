@@ -69,26 +69,6 @@ class face():
             cv2.imshow('%s' % (image_cnt), cv_bgr_image)
 
 
-class transFace():
-    def __init__(self, img, predictor_path):
-        self.img = img
-        self.detector = dlib.get_frontal_face_detector() #获取人脸分类器
-        #               cnn_face_detector = dlib.cnn_face_detection_model_v1( .dat文件--cnn模型 )
-        self.predictor = dlib.shape_predictor(predictor_path)  # 获取人脸特征点检测器
-
-    def get_landmark(self):
-        face_rect = self.detector(self.img, 1)
-        if(len(face_rect) > 1):
-            print('Too many faces.We only need no more than one face.')
-        elif(len(face_rect) == 0):
-            print('No face.We need at least one face.')
-        else:
-            print('left {0}; top {1}; right {2}; bottom {3}'.format(face_rect[0].left(), face_rect[0].top(),
-                                                                    face_rect[0].right(), face_rect[0].bottom()))
-            return np.matrix([[p.x, p.y] for p in self.predictor(self.img, face_rect[0]).parts()])
-
-
-
 #目标跟踪
 class myCorrelationTracker():
     def __init__(self, windowName='default window', cameraType=0):
@@ -193,14 +173,147 @@ class myCorrelationTracker():
 
 
 
+# 换脸 img2的脸替换img1的脸
+class transFace():
+    def __init__(self, img1, img2, predictor_path):
+        self.img1 = img1
+        self.img2 = img2
+        self.detector = dlib.get_frontal_face_detector() #获取人脸分类器
+        #               cnn_face_detector = dlib.cnn_face_detection_model_v1( .dat文件--cnn模型 )
+        self.predictor = dlib.shape_predictor(predictor_path)  # 获取人脸特征点检测器
 
-"""人脸检测和标定"""
+        #颜色校正中所用参数
+        self.correct_colors_frac = 0.6
+        self.eye_left_point = list(range(42, 48)) #左眼为特征点42-47
+        self.eye_right_point = list(range(36, 42)) #右眼为特征点36-41
+
+        #人脸融合中用
+        self.brow_left_point = list(range(22, 27))
+        self.brow_right_point = list(range(17, 22))
+        self.nose_point = list(range(27, 35))
+        self.mouth_point = list(range(48, 61))
+        self.overlay_points = [self.eye_right_point + self.eye_left_point + self.brow_left_point
+                                + self.brow_right_point + self.nose_point + self.mouth_point, ]
+        self.feature_amount = 11
+
+
+    #1、检测人脸并标记特征点
+    def get_landmark(self):
+        face_rect1 = self.detector(self.img1, 1)
+        face_rect2 = self.detector(self.img2, 1)
+        if(len(face_rect1) > 1):
+            print('Too many faces.We only need no more than one face.')
+        elif(len(face_rect1) == 0):
+            print('No face.We need at least one face.')
+        else:
+            print('left {0}; top {1}; right {2}; bottom {3}'.format(face_rect1[0].left(), face_rect1[0].top(),
+                                                                    face_rect1[0].right(), face_rect1[0].bottom()))
+        if(len(face_rect2) > 1):
+            print('Too many faces.We only need no more than one face.')
+        elif(len(face_rect2) == 0):
+            print('No face.We need at least one face.')
+        else:
+            print('left {0}; top {1}; right {2}; bottom {3}'.format(face_rect2[0].left(), face_rect2[0].top(),
+                                                                    face_rect2[0].right(), face_rect2[0].bottom()))
+        landmark1 = np.mat([[p.x, p.y] for p in self.predictor(self.img1, face_rect1[0]).parts()])
+        landmark2 = np.mat([[p.x, p.y] for p in self.predictor(self.img2, face_rect2[0]).parts()])
+        return landmark1, landmark2
+
+
+    #2、使用普氏分析法调整脸部 -- 返回仿射变换矩阵
+    def trans_from_points(self, points1, points2):
+        points1 = points1.astype(np.float64)
+        points2 = points2.astype(np.float64)
+        c1 = np.mean(points1, axis=0)
+        c2 = np.mean(points2, axis=0)
+        points1 -= c1
+        points2 -= c2
+        s1 = np.std(points1)
+        s2 = np.std(points2)
+        points1 /= s1
+        points2 /= s2
+
+        U, S, Vt = np.linalg.svd(points1.T * points2)
+        R = (U * Vt).T
+        #返回仿射变换矩阵。。。np.vstack():在竖直方向上堆叠，np.hstack():在水平方向上平铺
+        return np.vstack([np.hstack(((s2 / s1) * R, c2.T - (s2 / s1) * R * c1.T)), np.mat([0., 0., 1.])])
+
+    #2、使用普氏分析法调整脸部 -- 调整脸部
+    def warp_image(self, img, M, dshape):
+        out_img = np.zeros(dshape)
+        out_img = cv2.warpAffine(img, M[:2], (dshape[1], dshape[0]), dst=out_img,
+                                 flags=cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_TRANSPARENT)
+        return out_img
+
+    #3、颜色校正,使用img2除以img2的高斯模糊，乘以img1来校正颜色
+    def correct_colors(self, img1, img2, landmarks1):
+        blur_amount = self.correct_colors_frac * np.linalg.norm(
+            np.mean(landmarks1[self.eye_left_point], axis=0) -
+            np.mean(landmarks1[self.eye_right_point], axis=0))
+        blur_amount = int(blur_amount)
+        if blur_amount % 2 == 0:
+            blur_amount += 1
+        im1_blur = cv2.GaussianBlur(img1, (blur_amount, blur_amount), 0)
+        im2_blur = cv2.GaussianBlur(img2, (blur_amount, blur_amount), 0)
+
+        # Avoid divide-by-zero errors.
+        im2_blur += (128 * (im2_blur <= 1.0)).astype(im2_blur.dtype)
+
+        return (img2.astype(np.float64) * im1_blur.astype(np.float64) /
+                im2_blur.astype(np.float64))
+
+    #4、第二张图像特性混合于第一张图像
+    # 获取人脸掩模
+    def get_face_mask(self, img, landmarks):
+        mask = np.zeros(img.shape[:2], dtype=np.float64)
+        # 绘制凸包
+        points = cv2.convexHull(landmarks[self.overlay_points])  #得到凸包
+        cv2.fillConvexPoly(mask, points, color=1) #凸包填充
+
+        mask = np.array([mask, mask, mask]).transpose((1, 2, 0))
+        mask = (cv2.GaussianBlur(mask, (self.feature_amount, self.feature_amount), 0) > 0) * 1.0
+        mask = cv2.GaussianBlur(mask, (self.feature_amount, self.feature_amount), 0)
+        return mask
+
+
+    def changed(self):
+        landmarks1, landmarks2 = self.get_landmark()
+        cv2.imshow("s1", self.img1)
+        cv2.imshow("s2", self.img2)
+        M = self.trans_from_points(landmarks1, landmarks2)
+
+        img3 = f.warp_image(self.img2, M, self.img1.shape)
+        cv2.imshow("3", img3)
+
+        mask = self.get_face_mask(self.img2, landmarks2)
+        cv2.imshow("mask", mask)
+        warped_mask = self.warp_image(mask, M, self.img1.shape)
+        cv2.imshow("warped_mask", warped_mask)
+        combined_mask = np.max([self.get_face_mask(self.img1, landmarks1), warped_mask], axis=0)
+        cv2.imshow("combined_mask", combined_mask)
+
+        warped_corrected_img = self.correct_colors(self.img1, img3, landmarks1)
+        output = self.img1 * (1.0 - combined_mask) + warped_corrected_img * combined_mask
+        cv2.normalize(output, output, 0, 1, cv2.NORM_MINMAX)
+
+        cv2.imshow("final", output.astype(output.dtype))
+        cv2.waitKey(0)
+
+
+
+img1 = cv2.imread("9.jpg", cv2.IMREAD_COLOR)
+img2 = cv2.imread("7.jpg", cv2.IMREAD_COLOR)
+f = transFace(img1, img2, predictor_path="shape_predictor_68_face_landmarks.dat")
+f.changed()
+
+
+"""人脸检测和标定
 img = cv2.imread("5.jpg", cv2.IMREAD_COLOR)
 f = transFace(img, predictor_path="shape_predictor_68_face_landmarks.dat")
 mat_landmarks = f.get_landmark()
 print(mat_landmarks)
 cv2.waitKey()
-
+"""
 
 """  目标跟踪
 if __name__ == '__main__':
