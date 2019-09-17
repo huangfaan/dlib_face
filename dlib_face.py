@@ -194,6 +194,7 @@ class transFace():
         self.mouth_point = list(range(48, 61))
         self.overlay_points = [self.eye_right_point + self.eye_left_point + self.brow_left_point
                                 + self.brow_right_point + self.nose_point + self.mouth_point, ]
+        self.overlay2_points = [range(0, 27)] #用于绘制凸包、mask的点
         self.feature_amount = 11
 
 
@@ -222,8 +223,8 @@ class transFace():
 
     #2、使用普氏分析法调整脸部 -- 返回仿射变换矩阵
     def trans_from_points(self, points1, points2):
-        points1 = points1.astype(np.float64)
-        points2 = points2.astype(np.float64)
+        points1 = points1.astype(np.float32)
+        points2 = points2.astype(np.float32)
         c1 = np.mean(points1, axis=0)
         c2 = np.mean(points2, axis=0)
         points1 -= c1
@@ -240,7 +241,7 @@ class transFace():
 
     #2、使用普氏分析法调整脸部 -- 调整脸部
     def warp_image(self, img, M, dshape):
-        out_img = np.zeros(dshape)
+        out_img = np.zeros(dshape, img.dtype)
         out_img = cv2.warpAffine(img, M[:2], (dshape[1], dshape[0]), dst=out_img,
                                  flags=cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_TRANSPARENT)
         return out_img
@@ -259,15 +260,15 @@ class transFace():
         # Avoid divide-by-zero errors.
         im2_blur += (128 * (im2_blur <= 1.0)).astype(im2_blur.dtype)
 
-        return (img2.astype(np.float64) * im1_blur.astype(np.float64) /
-                im2_blur.astype(np.float64))
+        return (img2.astype(np.float32) * im1_blur.astype(np.float32) /
+                im2_blur.astype(np.float32))
 
     #4、第二张图像特性混合于第一张图像
     # 获取人脸掩模
     def get_face_mask(self, img, landmarks):
-        mask = np.zeros(img.shape[:2], dtype=np.float64)
+        mask = np.zeros(img.shape[:2], img.dtype)
         # 绘制凸包
-        points = cv2.convexHull(landmarks[self.overlay_points])  #得到凸包
+        points = cv2.convexHull(landmarks[self.overlay2_points])  #得到凸包
         cv2.fillConvexPoly(mask, points, color=1) #凸包填充
 
         mask = np.array([mask, mask, mask]).transpose((1, 2, 0))
@@ -275,7 +276,7 @@ class transFace():
         mask = cv2.GaussianBlur(mask, (self.feature_amount, self.feature_amount), 0)
         return mask
 
-
+    #普通直接替换
     def changed(self):
         landmarks1, landmarks2 = self.get_landmark()
         cv2.imshow("s1", self.img1)
@@ -301,19 +302,60 @@ class transFace():
 
 
 
+    #------------------------------以下为使用泊松融合替换脸部的--------------------------
+    def get_landmark_s(self, im):
+        face_rect = self.detector(im, 1)
+        landmark = np.mat([[p.x, p.y] for p in self.predictor(im, face_rect[0]).parts()])
+        return landmark
+
+    #泊松融合替换脸部
+    def changed_by_seamlessClone(self):
+        landmarks1, landmarks2 = self.get_landmark()
+        cv2.imshow("s1", self.img1)
+        cv2.imshow("s2", self.img2)
+
+        M = self.trans_from_points(landmarks1, landmarks2)
+        warped_img = f.warp_image(self.img2, M, self.img1.shape)
+        cv2.imshow("3-warped_img", warped_img)
+
+        landmarks_warped = self.get_landmark_s(warped_img)
+        warped_mask = self.get_face_mask(warped_img, landmarks_warped)
+        cv2.imshow("warped_mask", warped_mask)
+
+        #中心点
+        x, y, w, h = cv2.boundingRect(np.float32(landmarks_warped[self.overlay2_points]))
+        center = (x + int(w / 2), y + int(h / 2))
+        print(center)
+
+        combined_mask = np.max([self.get_face_mask(self.img1, landmarks1), warped_mask], axis=0)
+        cv2.imshow("combined_mask", combined_mask)
+        cv2.imshow("combined_mask1", combined_mask.astype(np.uint8)*255)
+        cv2.imshow("warped_mask1", warped_mask.astype(np.uint8)*255)
+        warped_corrected_img = self.correct_colors(self.img1, warped_img, landmarks1)
+
+
+        img_seamlessClone = cv2.seamlessClone(warped_corrected_img, self.img1, combined_mask.astype(np.uint8)*255, center, cv2.NORMAL_CLONE)
+        cv2.imshow("img_seamlessClone", img_seamlessClone)
+        cv2.waitKey(0)
+
+
+
+
 img1 = cv2.imread("9.jpg", cv2.IMREAD_COLOR)
 img2 = cv2.imread("7.jpg", cv2.IMREAD_COLOR)
 f = transFace(img1, img2, predictor_path="shape_predictor_68_face_landmarks.dat")
-f.changed()
+#f.changed()
+f.changed_by_seamlessClone()
 
 
-"""人脸检测和标定
-img = cv2.imread("5.jpg", cv2.IMREAD_COLOR)
-f = transFace(img, predictor_path="shape_predictor_68_face_landmarks.dat")
-mat_landmarks = f.get_landmark()
-print(mat_landmarks)
+"""  #人脸检测和标定
+img = cv2.imread("9.jpg", cv2.IMREAD_COLOR)
+f = face(img, predictor_path="shape_predictor_68_face_landmarks.dat", recognition_path="dlib_face_recognition_resnet_model_v1.dat")
+img2 = f.face_detect()
+cv2.imshow("aa", img2)
 cv2.waitKey()
 """
+
 
 """  目标跟踪
 if __name__ == '__main__':
