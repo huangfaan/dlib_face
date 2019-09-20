@@ -339,7 +339,7 @@ class transFace():
         cv2.waitKey(0)
 
 
-
+"""
 
 img1 = cv2.imread("9.jpg", cv2.IMREAD_COLOR)
 img2 = cv2.imread("7.jpg", cv2.IMREAD_COLOR)
@@ -349,12 +349,12 @@ f.changed_by_seamlessClone()
 
 
 """  #人脸检测和标定
-img = cv2.imread("9.jpg", cv2.IMREAD_COLOR)
+img = cv2.imread("10.jpg", cv2.IMREAD_COLOR)
 f = face(img, predictor_path="shape_predictor_68_face_landmarks.dat", recognition_path="dlib_face_recognition_resnet_model_v1.dat")
 img2 = f.face_detect()
 cv2.imshow("aa", img2)
 cv2.waitKey()
-"""
+
 
 
 """  目标跟踪
